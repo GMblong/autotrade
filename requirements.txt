@@ -1,0 +1,12 @@
+pandas<2.0
+numpy<1.25
+scikit-learn<1.2
+selenium
+optuna<3.2
+requests
+pyotp
+tenacity
+tabulate
+python-dotenv
+ntplib
+pytz
