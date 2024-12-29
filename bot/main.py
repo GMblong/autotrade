@@ -2,6 +2,7 @@ from modules import timedelta, logging, sleep, time, np, tabulate
 from autotrade import autotrade
 from fetcher import fetcher
 from session import session
+from authenticate import authenticate
 from utils import max_loss, max_positions, target_profit
 
 def main(account_type='Demo'):
@@ -34,16 +35,16 @@ def main(account_type='Demo'):
     # }
 
     bot = autotrade(selected_indicators=selected_indicators)
-
+    auth = authenticate()
     # logging.info("Menggunakan parameter yang telah ditentukan.")
 
     # indicator_weights = {key: parameters[key] for key in parameters if '_weight' in key}
     # indicator_threshold = parameters.get('indicator_threshold', 0.1)
     # combined_threshold = parameters.get('combined_threshold', 0.2)
 
-    bot.login()
+    auth.login()
     print(f"Login Berhasil")
-    initial_balance = bot.checkbalance()
+    initial_balance = auth.checkbalance()
 
     best_params = bot.optimize_strategy(data=None, test_type='realtime')
     indicator_weights = {indicator: best_params.get(f'{indicator}_weight', 1) for indicator in selected_indicators}
@@ -52,17 +53,17 @@ def main(account_type='Demo'):
     bot.test_strategy()
     try:
         # Mencoba memilih tipe akun dan memeriksa saldo
-        bot.select_account_type(account_type)
-        initial_balance = bot.checkbalance()
+        auth.select_account_type(account_type)
+        initial_balance = auth.checkbalance()
         print(f"Initial Balance: Rp{initial_balance}")
     except Exception as e:
         # Jika terjadi error, panggil fungsi close_ad_if_exists
         print(f"Terjadi kesalahan: {e}")
-        bot.close_ad_if_exists()  # Menutup iklan jika ada
+        auth.close_ad_if_exists()  # Menutup iklan jika ada
         # Coba ulang aksi
         try:
-            bot.select_account_type(account_type)
-            initial_balance = bot.checkbalance()
+            auth.select_account_type(account_type)
+            initial_balance = auth.checkbalance()
             print(f"Initial Balance: Rp{initial_balance}")
         except Exception as retry_error:
             print(f"Kesalahan tetap terjadi setelah mencoba menutup iklan: {retry_error}")
@@ -80,24 +81,24 @@ def main(account_type='Demo'):
 
         if runtime >= max_runtime and bot.compensation == bot.initial_compensation:
             if len(bot.all_close_prices) >= 14:
-                _, _, market_condition = bot.analyze_chart(
-                    bot.all_close_prices, bot.all_high_prices, bot.all_low_prices, bot.all_open_prices,
-                    indicator_weights, indicator_threshold, combined_threshold, 'sideways', filtered_signals=None
-                )
-                if market_condition == 'sideways':
-                    print("Runtime sudah melebihi batas waktu. Memperpanjang runtime dan mengulang optimasi strategi.")
+                print("Runtime sudah melebihi batas waktu. Memperpanjang runtime dan mengulang optimasi strategi.")
+                
+                # Ulang optimasi strategi
+                best_params = bot.optimize_strategy(data=None, test_type='realtime')
+                indicator_weights = {indicator: best_params.get(f'{indicator}_weight', 1) for indicator in selected_indicators}
+                indicator_threshold = best_params.get('indicator_threshold', 0.1)
+                combined_threshold = best_params.get('combined_threshold', 0.2)
 
-                    best_params = bot.optimize_strategy(data=None, test_type='realtime')  # Ulang optimasi
-                    indicator_weights = {indicator: best_params.get(f'{indicator}_weight', 1) for indicator in selected_indicators}
-                    indicator_threshold = best_params.get('indicator_threshold', 0.1)
-                    combined_threshold = best_params.get('combined_threshold', 0.2)
+                # Tambahkan 1 jam ke runtime maksimum
+                max_runtime += timedelta(hours=1)
 
-                    max_runtime += timedelta(hours=1)  # Tambahkan 1 jam ke runtime maksimum
-                    continue  # Lanjutkan loop
-                else:
-                    logging.warning(f"Pasar tidak sideways ({market_condition}). Bot akan tetap berjalan.")
+                # Logging tambahan
+                print(f"Max runtime diperpanjang menjadi: {max_runtime}")
+                print(f"Parameter strategi terbaru: {best_params}")
+                
+                continue  # Lanjutkan loop
             else:
-                print("Data belum cukup untuk analisis kondisi pasar. Melewati pengulangan optimasi.")
+                print("Data belum cukup untuk mengulang optimasi. Melewati pengulangan.")
 
         # Lakukan trading jika syarat lainnya terpenuhi
         if bot.total_positions < max_positions and bot.total_profit > max_loss and bot.total_profit < target_profit:
@@ -110,11 +111,11 @@ def main(account_type='Demo'):
                     print("Menunggu hingga pergantian menit berikutnya...")
                     time.sleep(60 - current_second)
 
-                if bot.is_position_closed():
-                    current_coin = bot.get_current_coin()
+                if auth.is_position_closed():
+                    current_coin = auth.get_current_coin()
                     if current_coin != "Crypto IDX":
                         logging.info(f"Coin yang dipilih saat ini adalah {current_coin}. Melewati trading.")
-                        if not bot.select_crypto_idx():
+                        if not auth.select_crypto_idx():
                             logging.warning("Gagal mengubah ke 'Crypto IDX'. Melewati trading.")
                             continue
 
@@ -129,7 +130,7 @@ def main(account_type='Demo'):
                             bot.all_close_prices[-60:], bot.all_high_prices[-60:], bot.all_low_prices[-60:], bot.all_open_prices[-60:]
                         )
                         sleep(1)
-                        current_balance = bot.checkbalance()
+                        current_balance = auth.checkbalance()
                         profit_or_loss = current_balance - previous_balance if not first_trade else 0
                         bot.total_profit = current_balance - initial_balance
 
@@ -167,7 +168,7 @@ def main(account_type='Demo'):
                                     logging.warning("Batas kompensasi tercapai.")
 
                         if direction != 'hold' and market_condition != 'sideways' and bot.compensation < bot.manual_trade_compensation_limit:
-                            bot.place_trade(direction)
+                            auth.place_trade(direction)
                             bot.total_positions += 1
 
                         nama = 'Andi Arif R.'
