@@ -1,4 +1,4 @@
-from modules import timedelta, logging, time, np, tabulate, sleep
+from modules import timedelta, logging, sleep, time, np, tabulate
 from autotrade import autotrade
 from fetcher import fetcher
 from session import session
@@ -21,7 +21,7 @@ def main(account_type='Demo'):
     # Log in ke platform
     interact.login()
     print(f"Login Berhasil")
-    # interact.select_account_type(account_type)
+    initial_balance = interact.checkbalance()
 
     # Mendapatkan parameter terbaik dari optimasi
     best_params = bot.optimize_strategy(data=None, test_type='realtime')
@@ -108,7 +108,7 @@ def main(account_type='Demo'):
                         bot.all_close_prices, bot.all_high_prices, bot.all_low_prices, bot.all_open_prices = (
                             bot.all_close_prices[-60:], bot.all_high_prices[-60:], bot.all_low_prices[-60:], bot.all_open_prices[-60:]
                         )
-                        sleep(1)
+                        
                         current_balance = interact.checkbalance()
                         profit_or_loss = current_balance - previous_balance if not first_trade else 0
                         interact.total_profit = current_balance - initial_balance
@@ -178,7 +178,7 @@ def main(account_type='Demo'):
                         formatted_runtime = f"{hours:02}:{minutes:02}"
 
                         metrics = [
-                            ["Place Trade", direction],
+                            ["Signal", direction],
                             ["Market Condition", market_condition],
                             ["Total Positions", interact.total_positions],
                             ["Winning Positions", interact.winning_positions],

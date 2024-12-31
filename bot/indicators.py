@@ -1,57 +1,66 @@
 from modules import pd, np, requests, logging, retry, stop_after_attempt, wait_exponential, timedelta, ThreadPoolExecutor
 from fetcher import fetcher
+
 def validate_input(*args):
     for data in args:
         if not isinstance(data, (list, pd.Series)):
             raise ValueError("Data harus berupa list atau pd.Series")
         if len(data) == 0:
             raise ValueError("Data tidak boleh kosong")
-        if any(isinstance(i, (str, bool)) for i in data):  # Cek jika ada data yang bukan angka
-            raise ValueError("Data mengandung nilai yang tidak valid")
+        if any(x is None or np.isnan(x) for x in data):  # Cek jika ada data tidak valid
+            raise ValueError("Data mengandung nilai None atau NaN")
+
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def fetch_data_for_day(end_time, day_offset):
     try:
-        # Tentukan waktu saat ini dengan offset hari menggunakan NTP
-        current_time = fetcher.get_ntp_time(url = 'https://binomo1.com/trading') - timedelta(days=day_offset)
-        formatted_time = current_time.strftime('%Y-%m-%dT00:00:00')  # Format waktu hari
-
-        # Tentukan URL yang sesuai untuk data harga
+        current_time = fetcher.get_ntp_time(url='https://binomo1.com/trading') - timedelta(days=day_offset)
+        formatted_time = current_time.strftime('%Y-%m-%dT00:00:00')
         url = fetcher.get_price_url(formatted_time=formatted_time)
-
-        # Ambil data dari URL
         response = requests.get(url, timeout=10)
-        response.raise_for_status()  # Akan melempar exception jika status code bukan 200
+        response.raise_for_status()
 
-        # Mengambil JSON dari response
         data = response.json()
 
-        # Validasi data yang diterima
+        # Log data yang diterima
+        logging.debug(f"Data diterima dari API: {data}")
+
         if 'data' in data and isinstance(data['data'], list) and len(data['data']) > 0:
             logging.info(f"Data berhasil diambil untuk {formatted_time}.")
             return data['data']
         else:
-            logging.error(f"Format data tidak valid atau kosong untuk {formatted_time}: {data}")
+            logging.error(f"Data kosong atau format tidak valid untuk {formatted_time}: {data}")
             return []
     except requests.RequestException as e:
         logging.error(f"Error mengambil data harga untuk {formatted_time}: {e}")
-        raise  # Supaya retry bekerja sesuai dengan logika retry
+        raise
+
 
 def fetch_historical_data(days=7):
-    end_time = fetcher.get_ntp_time(url = 'https://binomo1.com/trading')  # Ambil waktu dari NTP
+    end_time = fetcher.get_ntp_time(url='https://binomo1.com/trading')
     all_close_prices, all_high_prices, all_low_prices, all_open_prices = [], [], [], []
 
     with ThreadPoolExecutor() as executor:
-        # Melakukan eksekusi paralel untuk mengambil data
         results = list(executor.map(lambda day: safe_execute(fetch_data_for_day, end_time, day), range(days)))
 
-    # Memproses hasil dari setiap hari
     for day_data in results:
         if day_data:
-            all_close_prices.extend([entry.get('close') for entry in day_data])
-            all_high_prices.extend([entry.get('high') for entry in day_data])
-            all_low_prices.extend([entry.get('low') for entry in day_data])
-            all_open_prices.extend([entry.get('open') for entry in day_data])
+            for entry in day_data:
+                high = entry.get('high')
+                low = entry.get('low')
+                close = entry.get('close')
+                open_price = entry.get('open')
+
+                # Validasi setiap atribut harga
+                if high is None or low is None or close is None or open_price is None:
+                    logging.warning(f"Data tidak valid ditemukan: {entry}")
+                    continue
+
+                # Tambahkan ke list jika valid
+                all_high_prices.append(high)
+                all_low_prices.append(low)
+                all_close_prices.append(close)
+                all_open_prices.append(open_price)
 
     return all_close_prices, all_high_prices, all_low_prices, all_open_prices
 
@@ -98,12 +107,13 @@ def calculate_roc(prices, window=3):
 
 def calculate_williams_r(prices, high_prices, low_prices, window=7):
     validate_input(prices, high_prices, low_prices)
+    prices = pd.Series(prices)
     if len(prices) < window or len(high_prices) < window or len(low_prices) < window:
         logging.warning(f"Not enough data points to calculate Williams %R with window={window}. Returning None.")
         return [None] * len(prices)
     high = pd.Series(high_prices).rolling(window=window).max()
     low = pd.Series(low_prices).rolling(window=window).min()
-    williams_r = -100 * (high - pd.Series(prices)) / (high - low)
+    williams_r = -100 * (high - prices) / (high - low)
     return williams_r.tolist()
 
 def calculate_momentum(prices, window=3):
@@ -139,7 +149,7 @@ def calculate_bollinger_bands(prices, window=10, num_std=2):
     lower_band = rolling_mean - (rolling_std * num_std)
     return rolling_mean.tolist(), upper_band.tolist(), lower_band.tolist()
 
-def calculate_atr(high_prices, low_prices, close_prices, window=14):
+def calculate_atr(high_prices, low_prices, close_prices, window=5):  # Window 5 untuk 5 menit
     validate_input(high_prices, low_prices, close_prices)
     if len(high_prices) < window or len(low_prices) < window or len(close_prices) < window:
         logging.warning(f"Not enough data points to calculate ATR with window={window}. Returning None.")
@@ -153,6 +163,7 @@ def calculate_atr(high_prices, low_prices, close_prices, window=14):
     true_range = np.maximum(np.maximum(high_low, high_close), low_close)
     atr = true_range.rolling(window=window).mean()
     return atr.tolist()
+
 
 def calculate_parabolic_sar(high_prices, low_prices, close_prices, af=0.02, max_af=0.2, initial_trend='up'):
     validate_input(high_prices, low_prices, close_prices)

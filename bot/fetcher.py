@@ -2,35 +2,39 @@ from modules import requests, datetime, logging, pytz, time, ThreadPoolExecutor,
 
 
 class fetcher:
-    def get_time_from_url(url, timeout=10):
-        """Mendapatkan waktu dari header respons server pada URL tertentu."""
-        try:
-            # Kirim permintaan GET ke URL dengan timeout
-            response = requests.get(url, timeout=timeout)
-            
-            # Periksa apakah permintaan berhasil
-            if response.status_code == 200:
-                # Ambil header 'Date' yang berisi waktu server
-                server_time_str = response.headers.get('Date')
-                if server_time_str:
-                    # Mengonversi string waktu ke objek datetime
-                    server_time = datetime.strptime(server_time_str, "%a, %d %b %Y %H:%M:%S GMT")
-                    server_time = pytz.utc.localize(server_time)  # Pastikan waktu berada di UTC
-                    logging.info(f"Waktu server dari URL {url}: {server_time}")
-                    return server_time
+    def get_time_from_url(url, timeout=10, retries=5):
+        """Mendapatkan waktu dari header respons server pada URL tertentu dengan perulangan."""
+        for attempt in range(retries):
+            try:
+                # Kirim permintaan GET ke URL dengan timeout
+                response = requests.get(url, timeout=timeout)
+                
+                # Periksa apakah permintaan berhasil
+                if response.status_code == 200:
+                    # Ambil header 'Date' yang berisi waktu server
+                    server_time_str = response.headers.get('Date')
+                    if server_time_str:
+                        # Mengonversi string waktu ke objek datetime
+                        server_time = datetime.strptime(server_time_str, "%a, %d %b %Y %H:%M:%S GMT")
+                        server_time = pytz.utc.localize(server_time)  # Pastikan waktu berada di UTC
+                        # logging.info(f"Waktu server dari URL {url}: {server_time}")
+                        return server_time
+                    else:
+                        logging.error("Header 'Date' tidak ditemukan.")
                 else:
-                    logging.error("Header 'Date' tidak ditemukan.")
-                    return None
-            else:
-                logging.error(f"Permintaan gagal dengan status code: {response.status_code}")
-                return None
-        
-        except requests.Timeout:
-            logging.error("Permintaan timeout.")
-            return None
-        except requests.RequestException as e:
-            logging.error(f"Terjadi kesalahan dalam permintaan HTTP: {e}")
-            return None
+                    logging.error(f"Permintaan gagal dengan status code: {response.status_code}")
+            except requests.Timeout:
+                logging.error("Permintaan timeout.")
+            except requests.RequestException as e:
+                logging.error(f"Terjadi kesalahan dalam permintaan HTTP: {e}")
+
+            # Jika percobaan gagal, beri jeda sebelum mencoba lagi
+            logging.warning(f"Percobaan ke-{attempt + 1} gagal. Mencoba lagi...")
+            time.sleep(1)  # Waktu tunggu sebelum mencoba lagi
+
+        # Jika semua percobaan gagal
+        logging.error("Gagal mendapatkan waktu dari server setelah beberapa percobaan.")
+        return None
 
     def get_server_time_from_url(url):
         """Mengambil waktu dari server menggunakan URL dan mengembalikan waktu tersebut."""
@@ -50,7 +54,7 @@ class fetcher:
                 # Ambil waktu server dari URL
                 ntp_time = fetcher.get_server_time_from_url(url)  
                 if ntp_time is not None:
-                    logging.info(f"Waktu berhasil diambil dari server: {ntp_time}")
+                    # logging.info(f"Waktu berhasil diambil dari server: {ntp_time}")
                     return ntp_time
                 else:
                     logging.error("Gagal mendapatkan waktu yang valid dari server.")
@@ -98,7 +102,7 @@ class fetcher:
 
             # Validasi data yang diterima
             if 'data' in data and isinstance(data['data'], list) and len(data['data']) > 0:
-                logging.info(f"Data berhasil diambil untuk {formatted_time}.")
+                # logging.info(f"Data berhasil diambil untuk {formatted_time}.")
                 return data['data']
             else:
                 logging.error(f"Format data tidak valid atau kosong untuk {formatted_time}: {data}")

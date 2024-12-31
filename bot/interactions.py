@@ -1,32 +1,50 @@
-from modules import WebDriverWait, StaleElementReferenceException, TimeoutException, logging, By, NoSuchElementException, sleep, EC, Keys, Service, webdriver
+from modules import WebDriverWait, StaleElementReferenceException, TimeoutException, logging, By, NoSuchElementException, sleep, EC, Keys, Service, webdriver, ElementClickInterceptedException
 from utils import username, password, secret_key, totp
 from fetcher import fetcher
-from autotrade import autotrade
 
-class authenticate:
+class interactions:
     def __init__(self):
         service = Service('./drivers/chromedriver.exe')  # Sesuaikan path chromedriver
         options = webdriver.ChromeOptions()
         options.add_argument("--disable-extensions")
         options.add_argument('--headless')
+        options.add_argument("--disable-infobars")  # Opsional: Nonaktifkan infobar "Chrome is being controlled"
+        options.add_argument("--disable-extensions")  # Opsional: Nonaktifkan ekstensi
+        options.add_argument("--window-size=1920,1080")  # Atur ukuran layar ke 1920x1080 (lebar x tinggi)
         options.add_argument("--no-sandbox")
         options.add_argument("--disk-cache-size=0")
         options.add_argument("--disable-application-cache")
         options.add_argument("--disable-dev-shm-usage")
         self.driver = webdriver.Chrome(service=service, options=options)
         
-    def close_ad_if_exists(driver):
+        self.first_trade = True
+        self.initial_compensation = 20000
+        self.compensation_factor = 2.2
+        self.max_compensation = 4988715
+        self.manual_trade_compensation_limit = 4988715
+        self.compensation = self.initial_compensation
+        self.total_positions = 0
+        self.total_profit = 0
+        self.winning_positions = 0
+        self.compensation_positions = 0
+        self.successful_compensation_positions = 0
+
+    def close_ad_if_exists(self):
         try:
             # Cari elemen berdasarkan XPath
-            ad_element = driver.find_element(By.XPATH, '/html/body/ng-component/vui-modal/div/button')
-            if ad_element.is_displayed():  # Pastikan elemen terlihat
-                ad_element.click()  # Klik untuk menutup
-                print("Iklan ditemukan dan berhasil ditutup.")
-            else:
-                print("Elemen iklan ditemukan, tapi tidak terlihat.")
-        except Exception:
-            # Jika elemen tidak ditemukan, lanjutkan tanpa error
-            print("Tidak ada iklan yang perlu ditutup.")
+            ad_xpath = '/html/body/ng-component/vui-modal/div/div/div/ng-component/div/div/vui-button[1]/button'
+            ad_element = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, ad_xpath))
+                )
+            ad_element.click()
+            logging.info("Iklan ditemukan dan berhasil ditutup.")
+            return
+        except NoSuchElementException:
+            logging.info("Tidak ada iklan yang perlu ditutup.")
+        except ElementClickInterceptedException as e:
+            logging.warning(f"Iklan ditemukan tetapi tidak dapat diklik: {e}")
+        except Exception as e:
+            logging.error(f"Terjadi error saat mencoba menutup iklan: {e}")
     def login(self):
         TWO_FACTOR_INPUT_XPATH = '/html/body/binomo-root/platform-ui-scroll/div/div/ng-component/ng-component/div/div/auth-form/sa-auth-form/div[2]/div/app-two-factor-auth-validation/app-otp-validation-form/form/platform-forms-input/way-input/div/div/way-input-text/input'
         
@@ -229,13 +247,13 @@ class authenticate:
                 return True
             
             # Ambil detik dan cek apakah lebih besar atau sama dengan 02
-            remaining_seconds = int(time_parts[2])
+            remaining_seconds = int(time_parts[1])
             
             # Ambil waktu dari server NTP untuk membandingkan dengan waktu yang ada di halaman
             current_time = fetcher.get_ntp_time(url = 'https://binomo1.com/trading')
             
             # Cek jika detik lebih dari 2 atau waktu NTP lebih dari 2 detik
-            if remaining_seconds >= 2 or current_time.second > 2:
+            if remaining_seconds >= 1 or current_time.second > 1:
                 return True
             
             return False
@@ -248,3 +266,80 @@ class authenticate:
             # Jika ada error lain, anggap posisi tertutup
             logging.error(f"An unexpected error occurred: {e}")
             return True
+        
+    def place_trade(self, direction):
+        try:
+            # Validasi arah perdagangan
+            if direction not in ['buy', 'sell']:
+                raise ValueError(f"Invalid trade direction: {direction}")
+            # Validasi kompensasi
+            if not hasattr(self, 'compensation') or not isinstance(self.compensation, (int, float)) or self.compensation <= 0:
+                raise ValueError("Compensation amount is not properly set.")
+            # Cari elemen input untuk bid
+            bid_xpath = '/html/body/binomo-root/platform-ui-scroll/div/div/ng-component/main/div/app-panel/ng-component/section/div/way-input-controls/div/input'
+            bid_element = WebDriverWait(self.driver, 15).until(
+                EC.presence_of_element_located((By.XPATH, bid_xpath))
+            )
+            # Hilangkan simbol 'Rp' dan semua karakter non-numerik lainnya untuk input
+            compensation_value = f"Rp{self.compensation}"
+
+            bid_element.clear()
+            sleep(0.5)
+            bid_element.send_keys(compensation_value)
+            sleep(0.5)
+            # Validasi apakah nilai yang dimasukkan sesuai dengan kompensasi
+            entered_bid = bid_element.get_attribute('value')
+            if entered_bid != compensation_value:
+                logging.warning(f"Entered bid amount {entered_bid} does not match the compensation {compensation_value}. Retrying...")
+                return  # Keluar dan tunggu input yang benar
+            # Tentukan tombol yang akan diklik berdasarkan arah perdagangan
+            button_xpath = {
+                'buy': '/html/body/binomo-root/platform-ui-scroll/div/div/ng-component/main/div/app-panel/ng-component/section/binary-info/div[2]/div/trading-buttons/vui-button[1]/button',
+                'sell': '/html/body/binomo-root/platform-ui-scroll/div/div/ng-component/main/div/app-panel/ng-component/section/binary-info/div[2]/div/trading-buttons/vui-button[2]/button'
+            }[direction]
+
+            # Tangani overlay "Close"
+            overlay_close_xpath = '/html/body/binomo-root/platform-ui-scroll/div/div/jarvis/div/ng-component/way-toast/div/div[1]/vui-button/button/span/vui-icon/svg'
+            try:
+                overlay_close_button = self.driver.find_element(By.XPATH, overlay_close_xpath)
+                if overlay_close_button.is_displayed():
+                    overlay_close_button.click()
+                    logging.info("Overlay closed successfully.")
+            except NoSuchElementException:
+                logging.info("No overlay close button found. Proceeding...")
+            except Exception as e:
+                logging.error(f"Error handling overlay close button: {e}")
+
+            # Klik tombol perdagangan
+            try:
+                trade_button = WebDriverWait(self.driver, 15).until(
+                    EC.element_to_be_clickable((By.XPATH, button_xpath))
+                )
+                trade_button.click()
+                logging.info(f"Placed trade for Direction: {direction}, Compensation: {compensation_value}")
+            except ElementClickInterceptedException as e:
+                logging.warning(f"Element click intercepted. Attempting to use JavaScript click: {e}")
+                try:
+                    self.driver.execute_script("arguments[0].click();", trade_button)
+                except Exception as js_error:
+                    logging.error(f"JavaScript click failed: {js_error}")
+            except TimeoutException as e:
+                logging.error(f"Timeout waiting for elements to place trade: {e}")
+            except Exception as e:
+                logging.error(f"Unexpected error while placing trade ({direction}): {e}")
+        except ValueError as e:
+            logging.error(f"Validation error: {e}")
+        except Exception as e:
+            logging.error(f"Unexpected error: {e}")
+
+    def screenshot(self):
+        try:
+            # Ambil waktu yang akurat dari server NTP
+            timestamp = fetcher.get_ntp_time(url = 'https://binomo1.com/trading').strftime('%Y%m%d_%H%M%S')
+            screenshot_name = f"screenshot_{timestamp}.png"
+            
+            # Simpan screenshot dengan nama berdasarkan waktu NTP
+            self.driver.save_screenshot(screenshot_name)
+            logging.info(f"Screenshot saved: {screenshot_name}")
+        except Exception as e:
+            logging.error(f"Failed to take screenshot: {e}")

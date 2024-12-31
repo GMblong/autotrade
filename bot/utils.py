@@ -1,4 +1,8 @@
-from modules import pyotp, csv, os, load_dotenv
+from modules import pyotp, csv, os, load_dotenv, logging
+
+# Konfigurasi logging
+# logging.basicConfig(filename='trading_bot.log', level=logging.INFO,
+#                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 secret_key = 'GB2NQ7ABZFKCAM4RWYQFP76Y6LTQ7J2V'
 username = 'andiarifrahmatullah@gmail.com'
